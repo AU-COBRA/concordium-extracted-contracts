@@ -108,18 +108,13 @@ enum InitError {
    Error
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Reject)]
 enum ReceiveError {
     DeserialMsg,
     DeserialOldState,
     SerialNewState,
     ConvertActions, // Cannot convert ConCert actions to Concordium actions
     Error
-}
-impl From<ReceiveError> for concordium_std::Reject {
-  fn from(_ : ReceiveError) -> Self {
-    ().into()
-  }
 }
 
 #[derive(Clone, ConCertSerial, ConCertDeserial, PartialEq)]
@@ -942,14 +937,14 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
         &ConCert_Execution_Examples_Escrow_Msg::commit_money(_) => {
           match self.ConCert_Execution_Examples_Escrow_next_step(
                   state) {
-              &ConCert_Execution_Examples_Escrow_NextStep::buyer_commit(_) => {
-                  // NOTE: modified manually to match the Concordium execution model with the one in ConCert.
-                  // The problem is that in ConCert, the balance is updated before executing the call,
-                  // and the Concordium model updates the balance after the call.
+            &ConCert_Execution_Examples_Escrow_NextStep::buyer_commit(_) => {
               let item_price =
                 self.Coq_ZArith_BinIntDef_Z_div(
+                  self.Coq_ZArith_BinIntDef_Z_sub(
                     self.ConCert_Execution_Blockchain_ctx_contract_balance(
                       ctx),
+                    self.ConCert_Execution_Blockchain_ctx_amount(
+                      ctx)),
                   __Z_frompos(
                     __pos_zerobit(
                       1)));
@@ -968,7 +963,7 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
                         Some(
                           ())
                       },
-                  false => {
+                      false => {
                         None
                       },
                     } {
@@ -981,15 +976,8 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
                             Some(
                               ())
                           },
-                      false => {
-                          println!("---------------------- expected: {:?}",expected);
-                          println!("---------------------- actual: {:?}", self.ConCert_Execution_Blockchain_ctx_amount(
-                                  ctx));
-
-                          // here!!!
-                              // Some(
-                              // ())
-                          None
+                          false => {
+                            None
                           },
                         } {
                     Some(val2) => {
@@ -1011,7 +999,7 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
                             Coq_Init_Datatypes_list::nil(
                               PhantomData))))
                     },
-                      None => {
+                    None => {
                       None
                     },
                   }
@@ -1250,7 +1238,7 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
                   }
                 },
                 None => {
-                    None
+                  None
                 },
               }
             },
@@ -1371,15 +1359,14 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
                                           PhantomData))))))
                             },
                             None => {
-                                    None
-
+                              None
                             },
                           }
                         },
                         val2)
                     },
                     None => {
-                        None
+                      None
                     },
                   }
                 },
@@ -1389,14 +1376,14 @@ fn ConCert_Execution_Examples_Escrow_receive(&'a self, chain: &'a ConCert_Execut
               }
             },
             &ConCert_Execution_Examples_Escrow_NextStep::no_next_step(_) => {
-                None
+              None
             },
           }
         },
       }
     },
-      None => {
-          None
+    None => {
+      None
     },
   }
 }
@@ -1497,12 +1484,19 @@ fn contract_receive<A: HasActions, StateError: Default>(
             ctx.metadata().slot_time().timestamp_millis(),
             0 // No finalized height
         );
+    let balance = if ctx.sender() != concordium_std::Address::Contract(ctx.self_address()) {
+   // if the contract is not calling itself, we add the amount to the current balance
+   // as expeced by the ConCert execution model
+   (ctx.self_balance().micro_gtu + amount.micro_gtu) as i64
+    } else {
+        ctx.self_balance().micro_gtu as i64
+    };
     let cctx =
         ConCert_Execution_Blockchain_ContractCallContext::build_ctx(
             PhantomData,
             ctx.sender(),
             Address::Contract(ctx.self_address()),
-            ctx.self_balance().micro_gtu as i64,
+            balance,
             amount.micro_gtu as i64);
     let res = prg.ConCert_Execution_Examples_Escrow_receive(&cchain, &cctx, old_state, msg);
     match res {
@@ -1529,7 +1523,9 @@ mod tests {
     // This test writes the init data and reads it back.
     // Uncomment this test if you want to write the binary
     // data for making an actual call with concordium-client
-    // #[concordium_test]
+    // NOTE: once uncommented, run is as [cargo test], so
+    // it can write into a file
+   // #[concordium_test]
     fn test_read_init_data() {
         let buyer_addr = AccountAddress([0u8; 32]);
         let setup =
